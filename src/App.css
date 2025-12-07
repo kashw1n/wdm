@@ -114,3 +114,132 @@ button {
     background-color: #0f0f0f69;
   }
 }
+
+/* File info section */
+.file-info {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.file-info h3 {
+  margin-top: 0;
+}
+
+.file-info p {
+  margin: 0.5rem 0;
+}
+
+.download-btn {
+  margin-top: 1rem;
+  width: 100%;
+  background-color: #396cd8;
+  color: white;
+  font-weight: 600;
+}
+
+.download-btn:hover {
+  background-color: #2d5bb8;
+}
+
+/* Error styling */
+.error {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  margin-top: 1rem;
+}
+
+/* Download progress section */
+.download-progress {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.download-progress h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 24px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #396cd8, #24c8db);
+  border-radius: 12px;
+  transition: width 0.1s ease-out;
+}
+
+.progress-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+/* Chunk progress */
+.chunk-progress {
+  margin-top: 1.5rem;
+}
+
+.chunk-progress h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+.chunks {
+  display: flex;
+  gap: 4px;
+}
+
+.chunk {
+  flex: 1;
+}
+
+.chunk-bar {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.chunk-fill {
+  height: 100%;
+  background: #24c8db;
+  transition: width 0.1s ease-out;
+}
+
+/* Download complete */
+.download-complete {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  text-align: left;
+  background: rgba(36, 200, 219, 0.1);
+  border: 1px solid #24c8db;
+  border-radius: 8px;
+}
+
+.download-complete h3 {
+  margin-top: 0;
+  color: #24c8db;
+}
+
+.download-complete p {
+  margin: 0.5rem 0 0 0;
+  word-break: break-all;
+  font-size: 0.9rem;
+}
