@@ -41,7 +41,10 @@ pub struct DownloadComplete {
 
 #[tauri::command]
 async fn fetch_url_info(url: String) -> Result<UrlInfo, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|e| format!("Failed to create client: {}", e))?;
 
     let response = client
         .head(&url)
@@ -53,6 +56,8 @@ async fn fetch_url_info(url: String) -> Result<UrlInfo, String> {
         return Err(format!("HTTP error: {}", response.status()));
     }
 
+    // Get the final URL after redirects
+    let final_url = response.url().to_string();
     let headers = response.headers();
 
     // Get file size from Content-Length header
@@ -68,23 +73,37 @@ async fn fetch_url_info(url: String) -> Result<UrlInfo, String> {
         .map(|v| v == "bytes")
         .unwrap_or(false);
 
-    // Try to get filename from Content-Disposition or URL
+    // Try to get filename from Content-Disposition header first
     let filename = headers
         .get(reqwest::header::CONTENT_DISPOSITION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| {
             v.split("filename=").nth(1).map(|s| s.trim_matches('"').to_string())
         })
-        .unwrap_or_else(|| {
-            url.split('/').last().unwrap_or("download").to_string()
-        });
+        .or_else(|| {
+            // Try to extract from final URL path (handles redirects)
+            extract_filename_from_url(&final_url)
+        })
+        .or_else(|| {
+            // Fallback to original URL
+            extract_filename_from_url(&url)
+        })
+        .unwrap_or_else(|| "download".to_string());
 
     Ok(UrlInfo {
-        url,
+        url: final_url,
         filename,
         size,
         resumable,
     })
+}
+
+fn extract_filename_from_url(url: &str) -> Option<String> {
+    // Parse URL and get path, ignoring query params
+    url.split('?').next()
+        .and_then(|path| path.split('/').last())
+        .filter(|s| !s.is_empty() && s.contains('.'))
+        .map(|s| s.to_string())
 }
 
 #[tauri::command]
