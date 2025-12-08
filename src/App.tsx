@@ -53,6 +53,17 @@ interface FileExistsInfo {
   suggested_name: string;
 }
 
+interface DownloadInfo {
+  id: string;
+  url: string;
+  filename: string;
+  total_size: number;
+  downloaded: number;
+  status: string;
+  resumable: boolean;
+  created_at: number;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
@@ -82,10 +93,15 @@ function App() {
     urlInfo: UrlInfo | null;
   }>({ show: false, originalName: "", suggestedName: "", urlInfo: null });
   const [customFilename, setCustomFilename] = useState("");
+  const [history, setHistory] = useState<DownloadInfo[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     // Load initial connections setting
     invoke<number>("get_connections").then(setConnections);
+
+    // Load download history
+    loadHistory();
 
     const unlistenProgress = listen<DownloadProgress>("download-progress", (event) => {
       const progress = event.payload;
@@ -114,6 +130,8 @@ function App() {
         }
         return newMap;
       });
+      // Refresh history
+      loadHistory();
     });
 
     const unlistenError = listen<DownloadError>("download-error", (event) => {
@@ -126,6 +144,8 @@ function App() {
         }
         return newMap;
       });
+      // Refresh history
+      loadHistory();
     });
 
     return () => {
@@ -134,6 +154,15 @@ function App() {
       unlistenError.then((fn) => fn());
     };
   }, []);
+
+  async function loadHistory() {
+    try {
+      const hist = await invoke<DownloadInfo[]>("get_download_history");
+      setHistory(hist);
+    } catch (e) {
+      console.error("Failed to load history:", e);
+    }
+  }
 
   async function fetchInfo() {
     if (!url.trim()) return;
@@ -155,19 +184,15 @@ function App() {
   async function startDownload() {
     if (!urlInfo) return;
 
-    // Capture values before async operations to avoid closure issues
     const currentUrlInfo = { ...urlInfo };
-
     setError(null);
 
     try {
-      // Check if file already exists
       const fileCheck = await invoke<FileExistsInfo>("check_file_exists", {
         filename: currentUrlInfo.filename,
       });
 
       if (fileCheck.exists) {
-        // Show rename prompt
         setRenamePrompt({
           show: true,
           originalName: currentUrlInfo.filename,
@@ -178,7 +203,6 @@ function App() {
         return;
       }
 
-      // File doesn't exist, proceed with download
       await proceedWithDownload(currentUrlInfo, currentUrlInfo.filename);
     } catch (e) {
       setError(String(e));
@@ -186,7 +210,6 @@ function App() {
   }
 
   async function proceedWithDownload(info: UrlInfo, filename: string) {
-    // Clear form
     setUrl("");
     setUrlInfo(null);
     setRenamePrompt({ show: false, originalName: "", suggestedName: "", urlInfo: null });
@@ -199,7 +222,6 @@ function App() {
         resumable: info.resumable,
       });
 
-      // Add to downloads list
       setDownloads((prev) => {
         const newMap = new Map(prev);
         newMap.set(downloadId, {
@@ -247,6 +269,7 @@ function App() {
   async function cancelDownload(id: string) {
     try {
       await invoke("cancel_download", { id });
+      loadHistory();
     } catch (e) {
       console.error("Failed to cancel:", e);
     }
@@ -258,6 +281,56 @@ function App() {
       newMap.delete(id);
       return newMap;
     });
+  }
+
+  async function resumeInterruptedDownload(id: string) {
+    try {
+      // Add to active downloads UI
+      const histItem = history.find((h) => h.id === id);
+      if (histItem) {
+        setDownloads((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(id, {
+            id: id,
+            filename: histItem.filename,
+            url: histItem.url,
+            size: histItem.total_size,
+            progress: {
+              id: id,
+              downloaded: histItem.downloaded,
+              total: histItem.total_size,
+              speed: 0,
+              status: "downloading",
+              chunk_progress: [],
+            },
+            completed: false,
+          });
+          return newMap;
+        });
+      }
+
+      await invoke("resume_interrupted_download", { id });
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function removeFromHistory(id: string) {
+    try {
+      await invoke("remove_from_history", { id });
+      loadHistory();
+    } catch (e) {
+      console.error("Failed to remove from history:", e);
+    }
+  }
+
+  async function clearHistory() {
+    try {
+      await invoke("clear_download_history");
+      loadHistory();
+    } catch (e) {
+      console.error("Failed to clear history:", e);
+    }
   }
 
   async function updateConnections(value: number) {
@@ -276,13 +349,32 @@ function App() {
     (d) => d.completed || d.error || d.progress?.status === "cancelled"
   );
 
+  // Filter history for interrupted downloads that can be resumed
+  const interruptedDownloads = history.filter(
+    (h) =>
+      (h.status === "Paused" || h.status === "Failed" || h.status === "Downloading") &&
+      h.resumable &&
+      !downloads.has(h.id)
+  );
+
   return (
     <main className="container">
       <div className="header">
         <h1>Web Download Manager</h1>
-        <button className="settings-btn" onClick={() => setShowSettings(!showSettings)}>
-          Settings
-        </button>
+        <div className="header-buttons">
+          <button
+            className="history-btn"
+            onClick={() => setShowHistory(!showHistory)}
+          >
+            History
+          </button>
+          <button
+            className="settings-btn"
+            onClick={() => setShowSettings(!showSettings)}
+          >
+            Settings
+          </button>
+        </div>
       </div>
 
       {showSettings && (
@@ -301,6 +393,58 @@ function App() {
               ))}
             </select>
           </div>
+        </div>
+      )}
+
+      {showHistory && (
+        <div className="history-panel">
+          <div className="history-header">
+            <h3>Download History</h3>
+            {history.length > 0 && (
+              <button className="clear-history-btn" onClick={clearHistory}>
+                Clear Completed
+              </button>
+            )}
+          </div>
+          {history.length === 0 ? (
+            <p className="no-history">No download history</p>
+          ) : (
+            <div className="history-list">
+              {history.map((item) => (
+                <div key={item.id} className="history-item">
+                  <div className="history-item-info">
+                    <span className="history-filename">{item.filename}</span>
+                    <span className="history-size">
+                      {formatBytes(item.downloaded)} / {formatBytes(item.total_size)}
+                    </span>
+                    <span className={`history-status status-${item.status.toLowerCase()}`}>
+                      {item.status}
+                    </span>
+                  </div>
+                  <div className="history-item-actions">
+                    {(item.status === "Paused" ||
+                      item.status === "Failed" ||
+                      item.status === "Downloading") &&
+                      item.resumable &&
+                      !downloads.has(item.id) && (
+                        <button
+                          className="resume-history-btn"
+                          onClick={() => resumeInterruptedDownload(item.id)}
+                        >
+                          Resume
+                        </button>
+                      )}
+                    <button
+                      className="remove-history-btn"
+                      onClick={() => removeFromHistory(item.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -328,7 +472,8 @@ function App() {
         <div className="rename-prompt">
           <h3>File Already Exists</h3>
           <p>
-            A file named <strong>{renamePrompt.originalName}</strong> already exists in your Downloads folder.
+            A file named <strong>{renamePrompt.originalName}</strong> already exists
+            in your Downloads folder.
           </p>
           <div className="rename-input-row">
             <label>Save as:</label>
@@ -353,12 +498,42 @@ function App() {
       {urlInfo && !renamePrompt.show && (
         <div className="file-info">
           <h3>File Info</h3>
-          <p><strong>Filename:</strong> {urlInfo.filename}</p>
-          <p><strong>Size:</strong> {urlInfo.size ? formatBytes(urlInfo.size) : "Unknown"}</p>
-          <p><strong>Resumable:</strong> {urlInfo.resumable ? "Yes (multi-connection)" : "No (single connection)"}</p>
+          <p>
+            <strong>Filename:</strong> {urlInfo.filename}
+          </p>
+          <p>
+            <strong>Size:</strong> {urlInfo.size ? formatBytes(urlInfo.size) : "Unknown"}
+          </p>
+          <p>
+            <strong>Resumable:</strong>{" "}
+            {urlInfo.resumable ? "Yes (multi-connection)" : "No (single connection)"}
+          </p>
           <button onClick={startDownload} className="download-btn">
             Download
           </button>
+        </div>
+      )}
+
+      {interruptedDownloads.length > 0 && !showHistory && (
+        <div className="interrupted-section">
+          <h2>Resume Downloads</h2>
+          {interruptedDownloads.map((item) => (
+            <div key={item.id} className="interrupted-item">
+              <div className="interrupted-info">
+                <span className="filename">{item.filename}</span>
+                <span className="interrupted-progress">
+                  {formatBytes(item.downloaded)} / {formatBytes(item.total_size)} (
+                  {((item.downloaded / item.total_size) * 100).toFixed(1)}%)
+                </span>
+              </div>
+              <button
+                className="resume-btn"
+                onClick={() => resumeInterruptedDownload(item.id)}
+              >
+                Resume
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -384,7 +559,10 @@ function App() {
             <div key={download.id} className="download-item completed">
               <div className="download-header">
                 <span className="filename">{download.filename}</span>
-                <button className="remove-btn" onClick={() => removeDownload(download.id)}>
+                <button
+                  className="remove-btn"
+                  onClick={() => removeDownload(download.id)}
+                >
                   x
                 </button>
               </div>

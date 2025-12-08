@@ -391,6 +391,197 @@ button {
   border-color: #5a6268;
 }
 
+/* Header buttons */
+.header-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.history-btn {
+  padding: 0.4em 0.8em;
+  font-size: 0.9em;
+}
+
+/* History panel */
+.history-panel {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  text-align: left;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.history-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.clear-history-btn {
+  padding: 0.3em 0.6em;
+  font-size: 0.8em;
+  background: #d9534f;
+  color: white;
+}
+
+.clear-history-btn:hover {
+  background: #c9302c;
+  border-color: #c9302c;
+}
+
+.no-history {
+  color: rgba(128, 128, 128, 0.8);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 4px;
+}
+
+.history-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.history-filename {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-size {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.history-status {
+  font-size: 0.75rem;
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+  width: fit-content;
+}
+
+.status-completed {
+  background: rgba(92, 184, 92, 0.2);
+  color: #5cb85c;
+}
+
+.status-paused {
+  background: rgba(240, 173, 78, 0.2);
+  color: #f0ad4e;
+}
+
+.status-failed {
+  background: rgba(217, 83, 79, 0.2);
+  color: #d9534f;
+}
+
+.status-cancelled {
+  background: rgba(128, 128, 128, 0.2);
+  color: #888;
+}
+
+.status-downloading {
+  background: rgba(57, 108, 216, 0.2);
+  color: #396cd8;
+}
+
+.history-item-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: 1rem;
+}
+
+.resume-history-btn {
+  padding: 0.3em 0.6em;
+  font-size: 0.8em;
+  background: #5cb85c;
+  color: white;
+}
+
+.resume-history-btn:hover {
+  background: #449d44;
+  border-color: #449d44;
+}
+
+.remove-history-btn {
+  padding: 0.3em 0.6em;
+  font-size: 0.8em;
+  background: rgba(128, 128, 128, 0.3);
+}
+
+.remove-history-btn:hover {
+  background: rgba(128, 128, 128, 0.5);
+}
+
+/* Interrupted downloads section */
+.interrupted-section {
+  margin-top: 1.5rem;
+  text-align: left;
+}
+
+.interrupted-section h2 {
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+  color: #f0ad4e;
+}
+
+.interrupted-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: rgba(240, 173, 78, 0.1);
+  border: 1px solid rgba(240, 173, 78, 0.3);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.interrupted-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.interrupted-progress {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.resume-btn {
+  padding: 0.5em 1em;
+  background: #5cb85c;
+  color: white;
+  font-weight: 500;
+}
+
+.resume-btn:hover {
+  background: #449d44;
+  border-color: #449d44;
+}
+
 @media (prefers-color-scheme: dark) {
   .file-info,
   .download-item {
@@ -404,5 +595,13 @@ button {
 
   .remove-btn {
     background: rgba(255, 255, 255, 0.1);
+  }
+
+  .history-panel {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .history-item {
+    background: rgba(255, 255, 255, 0.03);
   }
 }

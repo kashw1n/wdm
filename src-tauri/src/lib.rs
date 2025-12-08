@@ -1,4 +1,7 @@
+mod persistence;
+
 use futures::stream::StreamExt;
+use persistence::{DownloadHistory, DownloadRecord, DownloadStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -6,16 +9,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 
-// Default number of connections
 const DEFAULT_CONNECTIONS: u64 = 8;
 
-// Download state shared across the app
 pub struct AppState {
     downloads: RwLock<HashMap<String, Arc<DownloadHandle>>>,
     settings: RwLock<Settings>,
+    history: RwLock<DownloadHistory>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -31,7 +33,6 @@ impl Default for Settings {
     }
 }
 
-// Handle to control a download
 pub struct DownloadHandle {
     pub id: String,
     pub cancelled: AtomicBool,
@@ -53,7 +54,7 @@ pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: u64,
     pub speed: f64,
-    pub status: String, // "downloading", "paused", "completed", "error", "cancelled"
+    pub status: String,
     pub chunk_progress: Vec<ChunkProgress>,
 }
 
@@ -76,6 +77,25 @@ pub struct DownloadComplete {
 pub struct DownloadError {
     pub id: String,
     pub error: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct FileExistsInfo {
+    pub exists: bool,
+    pub suggested_name: String,
+}
+
+// Frontend-friendly download record
+#[derive(Clone, Serialize)]
+pub struct DownloadInfo {
+    pub id: String,
+    pub url: String,
+    pub filename: String,
+    pub total_size: u64,
+    pub downloaded: u64,
+    pub status: String,
+    pub resumable: bool,
+    pub created_at: i64,
 }
 
 #[tauri::command]
@@ -134,12 +154,6 @@ fn extract_filename_from_url(url: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-#[derive(Clone, Serialize)]
-pub struct FileExistsInfo {
-    pub exists: bool,
-    pub suggested_name: String,
-}
-
 #[tauri::command]
 async fn check_file_exists(filename: String) -> Result<FileExistsInfo, String> {
     let download_dir = dirs::download_dir()
@@ -148,7 +162,6 @@ async fn check_file_exists(filename: String) -> Result<FileExistsInfo, String> {
     let file_path = download_dir.join(&filename);
 
     if file_path.exists() {
-        // Generate a suggested name with counter
         let suggested = generate_unique_filename(&download_dir, &filename);
         Ok(FileExistsInfo {
             exists: true,
@@ -183,6 +196,63 @@ fn generate_unique_filename(dir: &PathBuf, filename: &str) -> String {
 }
 
 #[tauri::command]
+async fn get_download_history(app: AppHandle) -> Result<Vec<DownloadInfo>, String> {
+    let state = app.state::<AppState>();
+    let history = state.history.read().await;
+
+    let downloads: Vec<DownloadInfo> = history
+        .get_all_downloads()
+        .into_iter()
+        .map(|r| DownloadInfo {
+            id: r.id.clone(),
+            url: r.url.clone(),
+            filename: r.filename.clone(),
+            total_size: r.total_size,
+            downloaded: r.total_downloaded(),
+            status: format!("{:?}", r.status),
+            resumable: r.resumable,
+            created_at: r.created_at,
+        })
+        .collect();
+
+    Ok(downloads)
+}
+
+#[tauri::command]
+async fn clear_download_history(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut history = state.history.write().await;
+
+    // Only remove completed, failed, and cancelled downloads
+    let ids_to_remove: Vec<String> = history
+        .downloads
+        .iter()
+        .filter(|(_, r)| {
+            r.status == DownloadStatus::Completed
+                || r.status == DownloadStatus::Failed
+                || r.status == DownloadStatus::Cancelled
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+
+    for id in ids_to_remove {
+        history.remove_download(&id);
+    }
+
+    history.save().await?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_from_history(app: AppHandle, id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut history = state.history.write().await;
+    history.remove_download(&id);
+    history.save().await?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn start_download(
     app: AppHandle,
     url: String,
@@ -199,9 +269,24 @@ async fn start_download(
         .ok_or_else(|| "Could not find downloads directory".to_string())?;
 
     let file_path = download_dir.join(&filename);
-
-    // Generate unique download ID
     let download_id = format!("{}_{}", filename, chrono::Utc::now().timestamp_millis());
+
+    // Create and save download record
+    let record = DownloadRecord::new(
+        download_id.clone(),
+        url.clone(),
+        filename.clone(),
+        file_path.to_string_lossy().to_string(),
+        size,
+        resumable,
+        num_connections,
+    );
+
+    {
+        let mut history = state.history.write().await;
+        history.add_download(record);
+        history.save().await?;
+    }
 
     // Create download handle
     let handle = Arc::new(DownloadHandle {
@@ -213,37 +298,178 @@ async fn start_download(
             .collect(),
     });
 
-    // Store handle
     {
         let mut downloads = state.downloads.write().await;
         downloads.insert(download_id.clone(), Arc::clone(&handle));
     }
 
-    // Spawn download task
     let app_clone = app.clone();
     let download_id_clone = download_id.clone();
 
     tokio::spawn(async move {
+        // Update status to downloading
+        {
+            let state = app_clone.state::<AppState>();
+            let mut history = state.history.write().await;
+            history.update_download(&download_id_clone, |r| {
+                r.status = DownloadStatus::Downloading;
+            });
+            let _ = history.save().await;
+        }
+
         let result = if resumable && size > 0 {
-            download_chunked(app_clone.clone(), handle, url, file_path, size, num_connections).await
+            download_chunked(app_clone.clone(), handle, url, file_path, size, num_connections, None).await
         } else {
             download_single(app_clone.clone(), handle, url, file_path).await
         };
 
-        // Remove from active downloads
         let state = app_clone.state::<AppState>();
         let mut downloads = state.downloads.write().await;
         downloads.remove(&download_id_clone);
+        drop(downloads);
+
+        // Update history based on result
+        let mut history = state.history.write().await;
+        match &result {
+            Ok(_) => {
+                history.update_download(&download_id_clone, |r| {
+                    r.status = DownloadStatus::Completed;
+                });
+            }
+            Err(e) if e.contains("cancelled") => {
+                history.update_download(&download_id_clone, |r| {
+                    r.status = DownloadStatus::Cancelled;
+                });
+            }
+            Err(_) => {
+                history.update_download(&download_id_clone, |r| {
+                    r.status = DownloadStatus::Failed;
+                });
+            }
+        }
+        let _ = history.save().await;
 
         if let Err(e) = result {
-            let _ = app_clone.emit("download-error", DownloadError {
-                id: download_id_clone,
-                error: e,
-            });
+            if !e.contains("cancelled") {
+                let _ = app_clone.emit("download-error", DownloadError {
+                    id: download_id_clone,
+                    error: e,
+                });
+            }
         }
     });
 
     Ok(download_id)
+}
+
+#[tauri::command]
+async fn resume_interrupted_download(app: AppHandle, id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    // Get the download record
+    let record = {
+        let history = state.history.read().await;
+        history.get_download(&id).cloned()
+    };
+
+    let record = record.ok_or("Download not found in history")?;
+
+    if record.status != DownloadStatus::Paused
+        && record.status != DownloadStatus::Failed
+        && record.status != DownloadStatus::Downloading
+    {
+        return Err("Download cannot be resumed".to_string());
+    }
+
+    if !record.resumable {
+        return Err("This download does not support resuming".to_string());
+    }
+
+    let num_connections = record.num_connections;
+    let file_path = PathBuf::from(&record.file_path);
+
+    // Create download handle with existing progress
+    let chunk_downloaded: Vec<Arc<AtomicU64>> = record
+        .chunks
+        .iter()
+        .map(|c| Arc::new(AtomicU64::new(c.downloaded)))
+        .collect();
+
+    let handle = Arc::new(DownloadHandle {
+        id: id.clone(),
+        cancelled: AtomicBool::new(false),
+        paused: AtomicBool::new(false),
+        chunk_downloaded,
+    });
+
+    {
+        let mut downloads = state.downloads.write().await;
+        downloads.insert(id.clone(), Arc::clone(&handle));
+    }
+
+    let app_clone = app.clone();
+    let id_clone = id.clone();
+    let url = record.url.clone();
+    let total_size = record.total_size;
+    let chunks = record.chunks.clone();
+
+    tokio::spawn(async move {
+        {
+            let state = app_clone.state::<AppState>();
+            let mut history = state.history.write().await;
+            history.update_download(&id_clone, |r| {
+                r.status = DownloadStatus::Downloading;
+            });
+            let _ = history.save().await;
+        }
+
+        let result = download_chunked(
+            app_clone.clone(),
+            handle,
+            url,
+            file_path,
+            total_size,
+            num_connections,
+            Some(chunks),
+        )
+        .await;
+
+        let state = app_clone.state::<AppState>();
+        let mut downloads = state.downloads.write().await;
+        downloads.remove(&id_clone);
+        drop(downloads);
+
+        let mut history = state.history.write().await;
+        match &result {
+            Ok(_) => {
+                history.update_download(&id_clone, |r| {
+                    r.status = DownloadStatus::Completed;
+                });
+            }
+            Err(e) if e.contains("cancelled") => {
+                history.update_download(&id_clone, |r| {
+                    r.status = DownloadStatus::Cancelled;
+                });
+            }
+            Err(_) => {
+                history.update_download(&id_clone, |r| {
+                    r.status = DownloadStatus::Failed;
+                });
+            }
+        }
+        let _ = history.save().await;
+
+        if let Err(e) = result {
+            if !e.contains("cancelled") {
+                let _ = app_clone.emit("download-error", DownloadError {
+                    id: id_clone,
+                    error: e,
+                });
+            }
+        }
+    });
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -262,27 +488,46 @@ async fn cancel_download(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 async fn pause_download(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let downloads = state.downloads.read().await;
 
-    if let Some(handle) = downloads.get(&id) {
-        handle.paused.store(true, Ordering::SeqCst);
-        Ok(())
-    } else {
-        Err("Download not found".to_string())
+    {
+        let downloads = state.downloads.read().await;
+        if let Some(handle) = downloads.get(&id) {
+            handle.paused.store(true, Ordering::SeqCst);
+        } else {
+            return Err("Download not found".to_string());
+        }
     }
+
+    // Save paused state to history
+    let mut history = state.history.write().await;
+    history.update_download(&id, |r| {
+        r.status = DownloadStatus::Paused;
+    });
+    history.save().await?;
+
+    Ok(())
 }
 
 #[tauri::command]
 async fn resume_download(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let downloads = state.downloads.read().await;
 
-    if let Some(handle) = downloads.get(&id) {
-        handle.paused.store(false, Ordering::SeqCst);
-        Ok(())
-    } else {
-        Err("Download not found".to_string())
+    {
+        let downloads = state.downloads.read().await;
+        if let Some(handle) = downloads.get(&id) {
+            handle.paused.store(false, Ordering::SeqCst);
+        } else {
+            return Err("Download not found".to_string());
+        }
     }
+
+    let mut history = state.history.write().await;
+    history.update_download(&id, |r| {
+        r.status = DownloadStatus::Downloading;
+    });
+    history.save().await?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -311,41 +556,53 @@ async fn download_chunked(
     file_path: PathBuf,
     total_size: u64,
     num_connections: u64,
+    existing_chunks: Option<Vec<persistence::ChunkRecord>>,
 ) -> Result<String, String> {
     let chunk_size = total_size / num_connections;
     let download_id = handle.id.clone();
 
-    // Calculate chunk ranges
-    let mut chunks: Vec<(u64, u64, u64)> = Vec::new();
-    for i in 0..num_connections {
-        let start = i * chunk_size;
-        let end = if i == num_connections - 1 {
-            total_size - 1
-        } else {
-            (i + 1) * chunk_size - 1
-        };
-        chunks.push((i, start, end));
-    }
+    // Calculate chunk ranges (use existing or create new)
+    let chunks: Vec<(u64, u64, u64, u64)> = if let Some(existing) = existing_chunks {
+        existing
+            .into_iter()
+            .map(|c| (c.id, c.start, c.end, c.downloaded))
+            .collect()
+    } else {
+        (0..num_connections)
+            .map(|i| {
+                let start = i * chunk_size;
+                let end = if i == num_connections - 1 {
+                    total_size - 1
+                } else {
+                    (i + 1) * chunk_size - 1
+                };
+                (i, start, end, 0u64)
+            })
+            .collect()
+    };
 
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| format!("Failed to create client: {}", e))?;
 
-    // Create temp directory for chunks
     let temp_dir = file_path.parent().unwrap().join(format!(".wdm_temp_{}", download_id));
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
-    // Spawn progress reporter
+    // Progress reporter
     let app_clone = app.clone();
     let handle_clone = Arc::clone(&handle);
-    let chunk_sizes: Vec<u64> = chunks.iter().map(|(_, start, end)| end - start + 1).collect();
+    let chunk_sizes: Vec<u64> = chunks.iter().map(|(_, start, end, _)| end - start + 1).collect();
     let download_id_clone = download_id.clone();
+    let app_for_save = app.clone();
+    let id_for_save = download_id.clone();
 
     let progress_handle = tokio::spawn(async move {
         let mut last_total = 0u64;
+        let mut save_counter = 0u32;
+
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
@@ -355,7 +612,8 @@ async fn download_chunked(
 
             let is_paused = handle_clone.paused.load(Ordering::SeqCst);
 
-            let chunk_progress: Vec<ChunkProgress> = handle_clone.chunk_downloaded
+            let chunk_progress: Vec<ChunkProgress> = handle_clone
+                .chunk_downloaded
                 .iter()
                 .enumerate()
                 .map(|(i, downloaded)| ChunkProgress {
@@ -366,7 +624,11 @@ async fn download_chunked(
                 .collect();
 
             let total_downloaded: u64 = chunk_progress.iter().map(|c| c.downloaded).sum();
-            let speed = if is_paused { 0.0 } else { (total_downloaded.saturating_sub(last_total)) as f64 * 10.0 };
+            let speed = if is_paused {
+                0.0
+            } else {
+                (total_downloaded.saturating_sub(last_total)) as f64 * 10.0
+            };
             last_total = total_downloaded;
 
             let status = if is_paused { "paused" } else { "downloading" };
@@ -377,10 +639,22 @@ async fn download_chunked(
                 total: total_size,
                 speed,
                 status: status.to_string(),
-                chunk_progress,
+                chunk_progress: chunk_progress.clone(),
             };
 
             let _ = app_clone.emit("download-progress", &progress);
+
+            // Save progress to history every second (10 iterations)
+            save_counter += 1;
+            if save_counter >= 10 {
+                save_counter = 0;
+                let state = app_for_save.state::<AppState>();
+                let mut history = state.history.write().await;
+                for cp in &chunk_progress {
+                    history.update_chunk_progress(&id_for_save, cp.id, cp.downloaded);
+                }
+                let _ = history.save().await;
+            }
 
             if total_downloaded >= total_size {
                 break;
@@ -388,37 +662,64 @@ async fn download_chunked(
         }
     });
 
-    // Download all chunks in parallel
+    // Download chunks in parallel
     let mut handles_vec = Vec::new();
 
-    for (chunk_id, start, end) in chunks {
+    for (chunk_id, start, end, already_downloaded) in chunks {
+        // Skip completed chunks
+        let chunk_total = end - start + 1;
+        if already_downloaded >= chunk_total {
+            continue;
+        }
+
         let client = client.clone();
         let url = url.clone();
         let temp_dir = temp_dir.clone();
         let downloaded = Arc::clone(&handle.chunk_downloaded[chunk_id as usize]);
         let handle_clone = Arc::clone(&handle);
 
+        // Set initial progress for resumed chunks
+        downloaded.store(already_downloaded, Ordering::Relaxed);
+
         let task = tokio::spawn(async move {
-            download_chunk(client, url, temp_dir, chunk_id, start, end, downloaded, handle_clone).await
+            download_chunk(
+                client,
+                url,
+                temp_dir,
+                chunk_id,
+                start,
+                end,
+                already_downloaded,
+                downloaded,
+                handle_clone,
+            )
+            .await
         });
-        handles_vec.push(task);
+        handles_vec.push((chunk_id, task));
     }
 
-    // Wait for all chunks to complete
-    let results: Vec<Result<PathBuf, String>> = futures::future::join_all(handles_vec)
-        .await
-        .into_iter()
-        .map(|r| r.map_err(|e| format!("Task failed: {}", e))?)
-        .collect();
+    // Wait for all chunks
+    let mut chunk_paths: Vec<(u64, PathBuf)> = Vec::new();
 
-    // Stop progress reporter
+    for (chunk_id, task) in handles_vec {
+        match task.await {
+            Ok(Ok(path)) => chunk_paths.push((chunk_id, path)),
+            Ok(Err(e)) => {
+                if !handle.cancelled.load(Ordering::SeqCst) {
+                    progress_handle.abort();
+                    return Err(e);
+                }
+            }
+            Err(e) => {
+                progress_handle.abort();
+                return Err(format!("Task failed: {}", e));
+            }
+        }
+    }
+
     progress_handle.abort();
 
-    // Check if cancelled
     if handle.cancelled.load(Ordering::SeqCst) {
-        // Cleanup temp files
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-
         let _ = app.emit("download-progress", DownloadProgress {
             id: download_id,
             downloaded: 0,
@@ -427,22 +728,26 @@ async fn download_chunked(
             status: "cancelled".to_string(),
             chunk_progress: vec![],
         });
-
         return Err("Download cancelled".to_string());
     }
 
-    // Check for errors
-    let chunk_paths: Vec<PathBuf> = results
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+    // Sort chunk paths by ID and merge
+    chunk_paths.sort_by_key(|(id, _)| *id);
 
-    // Merge chunks into final file
-    merge_chunks(&chunk_paths, &file_path).await?;
+    // Add any pre-existing chunk files
+    for i in 0..num_connections {
+        let chunk_path = temp_dir.join(format!("chunk_{}", i));
+        if chunk_path.exists() && !chunk_paths.iter().any(|(id, _)| *id == i) {
+            chunk_paths.push((i, chunk_path));
+        }
+    }
+    chunk_paths.sort_by_key(|(id, _)| *id);
 
-    // Cleanup temp files
+    let paths: Vec<PathBuf> = chunk_paths.into_iter().map(|(_, p)| p).collect();
+    merge_chunks(&paths, &file_path).await?;
+
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
-    // Emit completion event
     let complete = DownloadComplete {
         id: download_id.clone(),
         path: file_path.to_string_lossy().to_string(),
@@ -461,14 +766,20 @@ async fn download_chunk(
     chunk_id: u64,
     start: u64,
     end: u64,
+    already_downloaded: u64,
     downloaded: Arc<AtomicU64>,
     handle: Arc<DownloadHandle>,
 ) -> Result<PathBuf, String> {
     let chunk_path = temp_dir.join(format!("chunk_{}", chunk_id));
+    let actual_start = start + already_downloaded;
+
+    if actual_start > end {
+        return Ok(chunk_path);
+    }
 
     let response = client
         .get(&url)
-        .header("Range", format!("bytes={}-{}", start, end))
+        .header("Range", format!("bytes={}-{}", actual_start, end))
         .send()
         .await
         .map_err(|e| format!("Chunk {} request failed: {}", chunk_id, e))?;
@@ -477,19 +788,27 @@ async fn download_chunk(
         return Err(format!("Chunk {} HTTP error: {}", chunk_id, response.status()));
     }
 
-    let mut file = File::create(&chunk_path)
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&chunk_path)
         .await
-        .map_err(|e| format!("Failed to create chunk file: {}", e))?;
+        .map_err(|e| format!("Failed to open chunk file: {}", e))?;
+
+    // Seek to position if resuming
+    if already_downloaded > 0 {
+        file.seek(std::io::SeekFrom::Start(already_downloaded))
+            .await
+            .map_err(|e| format!("Failed to seek: {}", e))?;
+    }
 
     let mut stream = response.bytes_stream();
 
     while let Some(chunk_result) = stream.next().await {
-        // Check for cancellation
         if handle.cancelled.load(Ordering::SeqCst) {
             return Err("Cancelled".to_string());
         }
 
-        // Wait while paused
         while handle.paused.load(Ordering::SeqCst) {
             if handle.cancelled.load(Ordering::SeqCst) {
                 return Err("Cancelled".to_string());
@@ -505,7 +824,6 @@ async fn download_chunk(
     }
 
     file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
-
     Ok(chunk_path)
 }
 
@@ -525,7 +843,6 @@ async fn merge_chunks(chunk_paths: &[PathBuf], output_path: &PathBuf) -> Result<
     }
 
     output.flush().await.map_err(|e| format!("Flush error: {}", e))?;
-
     Ok(())
 }
 
@@ -563,11 +880,9 @@ async fn download_single(
     let mut last_downloaded = 0u64;
 
     while let Some(chunk_result) = stream.next().await {
-        // Check for cancellation
         if handle.cancelled.load(Ordering::SeqCst) {
             drop(file);
             let _ = tokio::fs::remove_file(&file_path).await;
-
             let _ = app.emit("download-progress", DownloadProgress {
                 id: download_id,
                 downloaded: 0,
@@ -576,19 +891,15 @@ async fn download_single(
                 status: "cancelled".to_string(),
                 chunk_progress: vec![],
             });
-
             return Err("Download cancelled".to_string());
         }
 
-        // Wait while paused
         while handle.paused.load(Ordering::SeqCst) {
             if handle.cancelled.load(Ordering::SeqCst) {
                 drop(file);
                 let _ = tokio::fs::remove_file(&file_path).await;
                 return Err("Download cancelled".to_string());
             }
-
-            // Emit paused status
             let _ = app.emit("download-progress", DownloadProgress {
                 id: download_id.clone(),
                 downloaded,
@@ -601,7 +912,6 @@ async fn download_single(
                     total: total_size,
                 }],
             });
-
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
 
@@ -611,11 +921,9 @@ async fn download_single(
             .map_err(|e| format!("Write error: {}", e))?;
         downloaded += bytes.len() as u64;
 
-        // Emit progress every 100ms
         if last_emit.elapsed().as_millis() >= 100 {
             let speed = (downloaded - last_downloaded) as f64 * 10.0;
             last_downloaded = downloaded;
-
             let progress = DownloadProgress {
                 id: download_id.clone(),
                 downloaded,
@@ -635,7 +943,6 @@ async fn download_single(
 
     file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
 
-    // Emit completion
     let complete = DownloadComplete {
         id: download_id,
         path: file_path.to_string_lossy().to_string(),
@@ -651,19 +958,33 @@ async fn download_single(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let history = DownloadHistory::load().await;
+                let state = handle.state::<AppState>();
+                *state.history.write().await = history;
+            });
+            Ok(())
+        })
         .manage(AppState {
             downloads: RwLock::new(HashMap::new()),
             settings: RwLock::new(Settings::default()),
+            history: RwLock::new(DownloadHistory::default()),
         })
         .invoke_handler(tauri::generate_handler![
             fetch_url_info,
             check_file_exists,
             start_download,
+            resume_interrupted_download,
             cancel_download,
             pause_download,
             resume_download,
             set_connections,
-            get_connections
+            get_connections,
+            get_download_history,
+            clear_download_history,
+            remove_from_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

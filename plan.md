@@ -12,6 +12,7 @@ Build a fast download manager like IDM that uses multiple parallel connections t
 │  - Progress bars (per-chunk + overall)                   │
 │  - Speed/ETA display                                     │
 │  - Pause/Resume/Cancel controls                          │
+│  - History panel                                         │
 └─────────────────────┬───────────────────────────────────┘
                       │ Tauri IPC (events + commands)
 ┌─────────────────────▼───────────────────────────────────┐
@@ -25,8 +26,8 @@ Build a fast download manager like IDM that uses multiple parallel connections t
 │                                                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
 │  │ HTTP Client  │  │ Progress     │  │ Persistence  │   │
-│  │ (reqwest     │  │ Tracker      │  │ (save state  │   │
-│  │  +pool)      │  │ (per-chunk)  │  │  for resume) │   │
+│  │ (reqwest     │  │ Tracker      │  │ (JSON state  │   │
+│  │  +pool)      │  │ (per-chunk)  │  │  file)       │   │
 │  └──────────────┘  └──────────────┘  └──────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -50,16 +51,19 @@ Build a fast download manager like IDM that uses multiple parallel connections t
 - [x] Settings UI panel
 - [x] Duplicate filename detection with rename prompt
 
-### Phase 3: Persistence & Resume
-- [ ] Save download state to disk
-- [ ] Resume interrupted downloads after app restart
-- [ ] Download history
+### Phase 3: Persistence & Resume ✅
+- [x] Save download state to disk (JSON file in app data directory)
+- [x] Resume interrupted downloads after app restart
+- [x] Download history with status tracking
+- [x] Per-chunk progress saved every second
+- [x] History panel UI with clear/remove options
 
 ### Phase 4: Polish & Features
-- [ ] Settings UI (download folder, connections, etc.)
+- [ ] Custom download folder selection
 - [ ] Speed limiting
 - [ ] System tray integration
 - [ ] Browser extension for catching downloads (optional)
+- [ ] yt-dlp integration for video sites (optional)
 
 ## Key Technical Decisions
 
@@ -69,7 +73,8 @@ Build a fast download manager like IDM that uses multiple parallel connections t
 4. **File Assembly**: Write chunks to temp files, merge on completion
 5. **Connection Pool**: Reuse HTTP connections via reqwest client
 6. **State Management**: Atomic flags for pause/cancel, RwLock for download registry
+7. **Persistence**: JSON file at `~/Library/Application Support/wdm/downloads.json`
 
 ## Current Status
-- **Completed**: Phase 1 + Phase 2
-- **Next Step**: Phase 3 - Persistence & Resume
+- **Completed**: Phase 1 + Phase 2 + Phase 3
+- **Next Step**: Phase 4 - Polish & Features
