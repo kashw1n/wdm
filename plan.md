@@ -40,12 +40,15 @@ Build a fast download manager like IDM that uses multiple parallel connections t
 - [x] Download UI with overall + per-chunk progress bars
 - [x] Speed display
 - [x] Single-connection fallback for non-resumable files
+- [x] Follow redirects and extract filename from final URL
 
-### Phase 2: Download Controls
-- [ ] Pause/Resume functionality
-- [ ] Cancel download
-- [ ] Download queue management
-- [ ] Configurable connection count (4-16)
+### Phase 2: Download Controls ✅
+- [x] Pause/Resume functionality
+- [x] Cancel download
+- [x] Download queue management (multiple concurrent downloads)
+- [x] Configurable connection count (1-32)
+- [x] Settings UI panel
+- [x] Duplicate filename detection with rename prompt
 
 ### Phase 3: Persistence & Resume
 - [ ] Save download state to disk
@@ -65,7 +68,8 @@ Build a fast download manager like IDM that uses multiple parallel connections t
 3. **Progress Updates**: Tauri events emitted per-chunk, aggregated on frontend
 4. **File Assembly**: Write chunks to temp files, merge on completion
 5. **Connection Pool**: Reuse HTTP connections via reqwest client
+6. **State Management**: Atomic flags for pause/cancel, RwLock for download registry
 
 ## Current Status
-- **Completed**: Phase 1 - Core download engine with 8 parallel connections
-- **Next Step**: Phase 2 - Pause/Resume/Cancel controls
+- **Completed**: Phase 1 + Phase 2
+- **Next Step**: Phase 3 - Persistence & Resume
