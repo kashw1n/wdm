@@ -4,80 +4,23 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
-interface UrlInfo {
-  url: string;
-  filename: string;
-  size: number | null;
-  resumable: boolean;
-}
+import {
+  Download,
+  DownloadInfo,
+  UrlInfo,
+  FileExistsInfo,
+  DownloadProgress,
+  DownloadComplete,
+  DownloadError,
+} from "./types";
+import { formatBytes } from "./utils";
 
-interface ChunkProgress {
-  id: number;
-  downloaded: number;
-  total: number;
-}
-
-interface DownloadProgress {
-  id: string;
-  downloaded: number;
-  total: number;
-  speed: number;
-  status: string;
-  chunk_progress: ChunkProgress[];
-}
-
-interface DownloadComplete {
-  id: string;
-  path: string;
-  filename: string;
-  total_size: number;
-}
-
-interface DownloadError {
-  id: string;
-  error: string;
-}
-
-interface Download {
-  id: string;
-  filename: string;
-  url: string;
-  size: number;
-  progress: DownloadProgress | null;
-  completed: boolean;
-  completedPath?: string;
-  error?: string;
-}
-
-interface FileExistsInfo {
-  exists: boolean;
-  suggested_name: string;
-}
-
-interface DownloadInfo {
-  id: string;
-  url: string;
-  filename: string;
-  total_size: number;
-  downloaded: number;
-  status: string;
-  resumable: boolean;
-  created_at: number;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + " MB";
-  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
-}
-
-function formatSpeed(bytesPerSec: number): string {
-  if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + " B/s";
-  if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(2) + " KB/s";
-  if (bytesPerSec < 1024 * 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(2) + " MB/s";
-  return (bytesPerSec / (1024 * 1024 * 1024)).toFixed(2) + " GB/s";
-}
+import { DownloadItem } from "./components/DownloadItem";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { HistoryPanel } from "./components/HistoryPanel";
+import { RenamePrompt } from "./components/RenamePrompt";
+import { FileInfo } from "./components/FileInfo";
+import { AddDownloadForm } from "./components/AddDownloadForm";
 
 function App() {
   const [url, setUrl] = useState("");
@@ -417,164 +360,50 @@ function App() {
       </div>
 
       {showSettings && (
-        <div className="settings-panel">
-          <h3>Settings</h3>
-          <div className="setting-row">
-            <label>Connections per download:</label>
-            <select
-              value={connections}
-              onChange={(e) => updateConnections(Number(e.target.value))}
-            >
-              {[1, 2, 4, 8, 16, 32].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="setting-row folder-row">
-            <label>Download folder:</label>
-            <span className="folder-path" title={downloadFolder}>
-              {downloadFolder}
-            </span>
-            <button className="folder-btn" onClick={selectDownloadFolder}>
-              Browse
-            </button>
-            <button className="folder-reset-btn" onClick={resetDownloadFolder}>
-              Reset
-            </button>
-          </div>
-          <div className="setting-row">
-            <label>Speed limit:</label>
-            <select
-              value={speedLimit}
-              onChange={(e) => updateSpeedLimit(Number(e.target.value))}
-            >
-              <option value={0}>Unlimited</option>
-              <option value={512 * 1024}>512 KB/s</option>
-              <option value={1024 * 1024}>1 MB/s</option>
-              <option value={2 * 1024 * 1024}>2 MB/s</option>
-              <option value={5 * 1024 * 1024}>5 MB/s</option>
-              <option value={10 * 1024 * 1024}>10 MB/s</option>
-              <option value={20 * 1024 * 1024}>20 MB/s</option>
-              <option value={50 * 1024 * 1024}>50 MB/s</option>
-            </select>
-          </div>
-        </div>
+        <SettingsPanel
+          connections={connections}
+          downloadFolder={downloadFolder}
+          speedLimit={speedLimit}
+          updateConnections={updateConnections}
+          selectDownloadFolder={selectDownloadFolder}
+          resetDownloadFolder={resetDownloadFolder}
+          updateSpeedLimit={updateSpeedLimit}
+        />
       )}
 
-      {showHistory && (() => {
-        const finishedDownloads = history.filter(
-          (h) => h.status === "Completed" || h.status === "Failed" || h.status === "Cancelled"
-        );
-        return (
-          <div className="history-panel">
-            <div className="history-header">
-              <h3>Download History</h3>
-              {finishedDownloads.length > 0 && (
-                <button className="clear-history-btn" onClick={clearHistory}>
-                  Clear All
-                </button>
-              )}
-            </div>
-            {finishedDownloads.length === 0 ? (
-              <p className="no-history">No download history</p>
-            ) : (
-              <div className="history-list">
-                {finishedDownloads.map((item) => (
-                  <div key={item.id} className="history-item">
-                    <div className="history-item-info">
-                      <span className="history-filename">{item.filename}</span>
-                      <span className="history-size">{formatBytes(item.total_size)}</span>
-                      <span className={`history-status status-${item.status.toLowerCase()}`}>
-                        {item.status}
-                      </span>
-                    </div>
-                    <div className="history-item-actions">
-                      <button
-                        className="remove-history-btn"
-                        onClick={() => removeFromHistory(item.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          fetchInfo();
-        }}
-      >
-        <input
-          value={url}
-          onChange={(e) => setUrl(e.currentTarget.value)}
-          placeholder="Enter URL to download..."
-          style={{ flex: 1 }}
+      {showHistory && (
+        <HistoryPanel
+          history={history}
+          clearHistory={clearHistory}
+          removeFromHistory={removeFromHistory}
         />
-        <button type="submit" disabled={loading}>
-          {loading ? "Checking..." : "Check URL"}
-        </button>
-      </form>
+      )}
+
+      <AddDownloadForm
+        url={url}
+        setUrl={setUrl}
+        loading={loading}
+        onSubmit={fetchInfo}
+      />
 
       {error && <p className="error">{error}</p>}
 
       {renamePrompt.show && (
-        <div className="rename-prompt">
-          <h3>File Already Exists</h3>
-          <p>
-            A file named <strong>{renamePrompt.originalName}</strong> already exists
-            in your Downloads folder.
-          </p>
-          <div className="rename-input-row">
-            <label>Save as:</label>
-            <input
-              type="text"
-              value={customFilename}
-              onChange={(e) => setCustomFilename(e.target.value)}
-              placeholder="Enter new filename"
-            />
-          </div>
-          <div className="rename-buttons">
-            <button onClick={handleRenameConfirm} className="confirm-btn">
-              Download
-            </button>
-            <button onClick={handleRenameCancel} className="cancel-btn">
-              Cancel
-            </button>
-          </div>
-        </div>
+        <RenamePrompt
+          originalName={renamePrompt.originalName}
+          customFilename={customFilename}
+          setCustomFilename={setCustomFilename}
+          onConfirm={handleRenameConfirm}
+          onCancel={handleRenameCancel}
+        />
       )}
 
       {urlInfo && !renamePrompt.show && (
-        <div className="file-info">
-          <div className="file-info-header">
-            <h3>File Info</h3>
-            <button className="close-btn" onClick={() => setUrlInfo(null)} title="Close">
-              ×
-            </button>
-          </div>
-          <p>
-            <strong>Filename:</strong> {urlInfo.filename}
-          </p>
-          <p>
-            <strong>Size:</strong> {urlInfo.size ? formatBytes(urlInfo.size) : "Unknown"}
-          </p>
-          <p>
-            <strong>Resumable:</strong>{" "}
-            {urlInfo.resumable ? "Yes (multi-connection)" : "No (single connection)"}
-          </p>
-          <button onClick={startDownload} className="download-btn">
-            Download
-          </button>
-        </div>
+        <FileInfo
+          urlInfo={urlInfo}
+          onClose={() => setUrlInfo(null)}
+          onDownload={startDownload}
+        />
       )}
 
       {interruptedDownloads.length > 0 && !showHistory && (
@@ -641,77 +470,6 @@ function App() {
         </div>
       )}
     </main>
-  );
-}
-
-interface DownloadItemProps {
-  download: Download;
-  onPause: () => void;
-  onResume: () => void;
-  onCancel: () => void;
-}
-
-function DownloadItem({ download, onPause, onResume, onCancel }: DownloadItemProps) {
-  const progress = download.progress;
-  const isPaused = progress?.status === "paused";
-  const percent = progress
-    ? ((progress.downloaded / progress.total) * 100).toFixed(1)
-    : "0";
-
-  return (
-    <div className="download-item">
-      <div className="download-header">
-        <span className="filename">{download.filename}</span>
-        <div className="download-controls">
-          {isPaused ? (
-            <button className="control-btn resume" onClick={onResume} title="Resume">
-              Resume
-            </button>
-          ) : (
-            <button className="control-btn pause" onClick={onPause} title="Pause">
-              Pause
-            </button>
-          )}
-          <button className="control-btn cancel" onClick={onCancel} title="Cancel">
-            Cancel
-          </button>
-        </div>
-      </div>
-
-      {progress && (
-        <>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${percent}%` }} />
-          </div>
-          <div className="progress-stats">
-            <span>
-              {formatBytes(progress.downloaded)} / {formatBytes(progress.total)}
-            </span>
-            <span>{percent}%</span>
-            <span>{isPaused ? "Paused" : formatSpeed(progress.speed)}</span>
-          </div>
-
-          {progress.chunk_progress.length > 1 && (
-            <div className="chunk-progress">
-              <div className="chunks">
-                {progress.chunk_progress.map((chunk) => (
-                  <div key={chunk.id} className="chunk">
-                    <div className="chunk-bar">
-                      <div
-                        className="chunk-fill"
-                        style={{
-                          width: `${(chunk.downloaded / chunk.total) * 100}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
   );
 }
 
