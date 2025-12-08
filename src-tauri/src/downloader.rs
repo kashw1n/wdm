@@ -355,7 +355,13 @@ pub async fn download_single(
     let total_size = response.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
 
-    let mut file = File::create(&file_path)
+    // Use .part extension during download
+    let part_path = file_path.with_extension(format!(
+        "{}.part",
+        file_path.extension().and_then(|e| e.to_str()).unwrap_or("")
+    ));
+
+    let mut file = File::create(&part_path)
         .await
         .map_err(|e| format!("Failed to create file: {}", e))?;
 
@@ -366,7 +372,7 @@ pub async fn download_single(
     while let Some(chunk_result) = stream.next().await {
         if handle.cancelled.load(Ordering::SeqCst) {
             drop(file);
-            let _ = tokio::fs::remove_file(&file_path).await;
+            let _ = tokio::fs::remove_file(&part_path).await;
             let _ = app.emit("download-progress", DownloadProgress {
                 id: download_id,
                 downloaded: 0,
@@ -381,7 +387,7 @@ pub async fn download_single(
         while handle.paused.load(Ordering::SeqCst) {
             if handle.cancelled.load(Ordering::SeqCst) {
                 drop(file);
-                let _ = tokio::fs::remove_file(&file_path).await;
+                let _ = tokio::fs::remove_file(&part_path).await;
                 return Err("Download cancelled".to_string());
             }
             let _ = app.emit("download-progress", DownloadProgress {
@@ -426,6 +432,12 @@ pub async fn download_single(
     }
 
     file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
+    drop(file);
+
+    // Rename .part to final filename
+    tokio::fs::rename(&part_path, &file_path)
+        .await
+        .map_err(|e| format!("Failed to rename part file: {}", e))?;
 
     let complete = DownloadComplete {
         id: download_id,
