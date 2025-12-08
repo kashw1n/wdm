@@ -123,6 +123,19 @@ pub async fn clear_download_history(app: AppHandle) -> Result<(), String> {
         .collect();
 
     for id in ids_to_remove {
+        if let Some(record) = history.downloads.get(&id) {
+            let file_path = PathBuf::from(&record.file_path);
+            if let Some(parent) = file_path.parent() {
+                let temp_dir = parent.join(format!(".wdm_temp_{}", id));
+                let _ = tokio::fs::remove_dir_all(temp_dir).await;
+            }
+            
+            let part_path = file_path.with_extension(format!(
+                "{}.part",
+                file_path.extension().and_then(|e| e.to_str()).unwrap_or("")
+            ));
+            let _ = tokio::fs::remove_file(part_path).await;
+        }
         history.remove_download(&id);
     }
 
@@ -134,6 +147,21 @@ pub async fn clear_download_history(app: AppHandle) -> Result<(), String> {
 pub async fn remove_from_history(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut history = state.history.write().await;
+    
+    if let Some(record) = history.downloads.get(&id) {
+        let file_path = PathBuf::from(&record.file_path);
+        if let Some(parent) = file_path.parent() {
+            let temp_dir = parent.join(format!(".wdm_temp_{}", id));
+            let _ = tokio::fs::remove_dir_all(temp_dir).await;
+        }
+
+        let part_path = file_path.with_extension(format!(
+            "{}.part",
+            file_path.extension().and_then(|e| e.to_str()).unwrap_or("")
+        ));
+        let _ = tokio::fs::remove_file(part_path).await;
+    }
+
     history.remove_download(&id);
     history.save().await?;
     Ok(())

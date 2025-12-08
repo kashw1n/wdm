@@ -179,6 +179,7 @@ pub async fn download_chunked(
     progress_handle.abort();
 
     if handle.cancelled.load(Ordering::SeqCst) {
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await; // Clean up temp dir
         let _ = app.emit("download-progress", DownloadProgress {
             id: download_id,
             downloaded: 0,
