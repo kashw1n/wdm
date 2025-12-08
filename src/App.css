@@ -66,6 +66,33 @@
   background: white;
 }
 
+.folder-row {
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.folder-path {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4em 0.6em;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-btn,
+.folder-reset-btn {
+  padding: 0.4em 0.8em;
+  font-size: 0.85em;
+}
+
+.folder-reset-btn {
+  background: rgba(0, 0, 0, 0.1);
+}
+
 .row {
   display: flex;
   gap: 0.5rem;
@@ -121,6 +148,14 @@ button {
     background: #0f0f0f;
     color: #f6f6f6;
     border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .folder-path {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .folder-reset-btn {
+    background: rgba(255, 255, 255, 0.1);
   }
 
   input,

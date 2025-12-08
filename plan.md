@@ -58,10 +58,10 @@ Build a fast download manager like IDM that uses multiple parallel connections t
 - [x] Per-chunk progress saved every second
 - [x] History panel UI with clear/remove options
 
-### Phase 4: Polish & Features
-- [ ] Custom download folder selection
-- [ ] Speed limiting
-- [ ] System tray integration
+### Phase 4: Polish & Features ✅
+- [x] Custom download folder selection
+- [x] Speed limiting (configurable: 512KB/s to 50MB/s or unlimited)
+- [x] System tray integration (minimize to tray, tray menu)
 - [ ] Browser extension for catching downloads (optional)
 - [ ] yt-dlp integration for video sites (optional)
 
@@ -76,5 +76,5 @@ Build a fast download manager like IDM that uses multiple parallel connections t
 7. **Persistence**: JSON file at `~/Library/Application Support/wdm/downloads.json`
 
 ## Current Status
-- **Completed**: Phase 1 + Phase 2 + Phase 3
-- **Next Step**: Phase 4 - Polish & Features
+- **Completed**: Phase 1 + Phase 2 + Phase 3 + Phase 4
+- **Next Step**: Optional features (browser extension, yt-dlp integration)

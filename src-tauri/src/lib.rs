@@ -7,7 +7,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{
+    AppHandle, Emitter, Manager,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::RwLock;
@@ -23,13 +27,60 @@ pub struct AppState {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub connections: u64,
+    pub download_folder: Option<String>,
+    #[serde(default)]
+    pub speed_limit: u64, // bytes per second, 0 = unlimited
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             connections: DEFAULT_CONNECTIONS,
+            download_folder: None,
+            speed_limit: 0,
         }
+    }
+}
+
+impl Settings {
+    fn get_settings_path() -> PathBuf {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("wdm")
+            .join("settings.json")
+    }
+
+    pub async fn load() -> Self {
+        let path = Self::get_settings_path();
+        if !path.exists() {
+            return Self::default();
+        }
+        match tokio::fs::read_to_string(&path).await {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+
+    pub async fn save(&self) -> Result<(), String> {
+        let path = Self::get_settings_path();
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("Failed to create settings directory: {}", e))?;
+        }
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+        tokio::fs::write(&path, content)
+            .await
+            .map_err(|e| format!("Failed to write settings: {}", e))?;
+        Ok(())
+    }
+
+    pub fn get_download_folder(&self) -> PathBuf {
+        self.download_folder
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| dirs::download_dir().unwrap_or_else(|| PathBuf::from(".")))
     }
 }
 
@@ -38,6 +89,7 @@ pub struct DownloadHandle {
     pub cancelled: AtomicBool,
     pub paused: AtomicBool,
     pub chunk_downloaded: Vec<Arc<AtomicU64>>,
+    pub speed_limit: AtomicU64, // bytes per second, 0 = unlimited
 }
 
 #[derive(Clone, Serialize)]
@@ -155,9 +207,10 @@ fn extract_filename_from_url(url: &str) -> Option<String> {
 }
 
 #[tauri::command]
-async fn check_file_exists(filename: String) -> Result<FileExistsInfo, String> {
-    let download_dir = dirs::download_dir()
-        .ok_or_else(|| "Could not find downloads directory".to_string())?;
+async fn check_file_exists(app: AppHandle, filename: String) -> Result<FileExistsInfo, String> {
+    let state = app.state::<AppState>();
+    let settings = state.settings.read().await;
+    let download_dir = settings.get_download_folder();
 
     let file_path = download_dir.join(&filename);
 
@@ -263,10 +316,8 @@ async fn start_download(
     let state = app.state::<AppState>();
     let settings = state.settings.read().await;
     let num_connections = settings.connections;
+    let download_dir = settings.get_download_folder();
     drop(settings);
-
-    let download_dir = dirs::download_dir()
-        .ok_or_else(|| "Could not find downloads directory".to_string())?;
 
     let file_path = download_dir.join(&filename);
     let download_id = format!("{}_{}", filename, chrono::Utc::now().timestamp_millis());
@@ -289,6 +340,10 @@ async fn start_download(
     }
 
     // Create download handle
+    let speed_limit = {
+        let settings = state.settings.read().await;
+        settings.speed_limit
+    };
     let handle = Arc::new(DownloadHandle {
         id: download_id.clone(),
         cancelled: AtomicBool::new(false),
@@ -296,6 +351,7 @@ async fn start_download(
         chunk_downloaded: (0..num_connections)
             .map(|_| Arc::new(AtomicU64::new(0)))
             .collect(),
+        speed_limit: AtomicU64::new(speed_limit),
     });
 
     {
@@ -395,11 +451,16 @@ async fn resume_interrupted_download(app: AppHandle, id: String) -> Result<(), S
         .map(|c| Arc::new(AtomicU64::new(c.downloaded)))
         .collect();
 
+    let speed_limit = {
+        let settings = state.settings.read().await;
+        settings.speed_limit
+    };
     let handle = Arc::new(DownloadHandle {
         id: id.clone(),
         cancelled: AtomicBool::new(false),
         paused: AtomicBool::new(false),
         chunk_downloaded,
+        speed_limit: AtomicU64::new(speed_limit),
     });
 
     {
@@ -539,6 +600,7 @@ async fn set_connections(app: AppHandle, connections: u64) -> Result<(), String>
     let state = app.state::<AppState>();
     let mut settings = state.settings.write().await;
     settings.connections = connections;
+    settings.save().await?;
     Ok(())
 }
 
@@ -547,6 +609,66 @@ async fn get_connections(app: AppHandle) -> Result<u64, String> {
     let state = app.state::<AppState>();
     let settings = state.settings.read().await;
     Ok(settings.connections)
+}
+
+#[tauri::command]
+async fn get_download_folder(app: AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    let settings = state.settings.read().await;
+    Ok(settings.get_download_folder().to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn set_download_folder(app: AppHandle, folder: String) -> Result<(), String> {
+    let path = PathBuf::from(&folder);
+    if !path.exists() {
+        return Err("Folder does not exist".to_string());
+    }
+    if !path.is_dir() {
+        return Err("Path is not a directory".to_string());
+    }
+
+    let state = app.state::<AppState>();
+    let mut settings = state.settings.write().await;
+    settings.download_folder = Some(folder);
+    settings.save().await?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn reset_download_folder(app: AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    let mut settings = state.settings.write().await;
+    settings.download_folder = None;
+    settings.save().await?;
+    Ok(settings.get_download_folder().to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn get_speed_limit(app: AppHandle) -> Result<u64, String> {
+    let state = app.state::<AppState>();
+    let settings = state.settings.read().await;
+    Ok(settings.speed_limit)
+}
+
+#[tauri::command]
+async fn set_speed_limit(app: AppHandle, limit: u64) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    // Update settings
+    {
+        let mut settings = state.settings.write().await;
+        settings.speed_limit = limit;
+        settings.save().await?;
+    }
+
+    // Update all active downloads
+    let downloads = state.downloads.read().await;
+    for handle in downloads.values() {
+        handle.speed_limit.store(limit, Ordering::Relaxed);
+    }
+
+    Ok(())
 }
 
 async fn download_chunked(
@@ -803,6 +925,9 @@ async fn download_chunk(
     }
 
     let mut stream = response.bytes_stream();
+    let num_chunks = handle.chunk_downloaded.len() as u64;
+    let mut throttle_start = std::time::Instant::now();
+    let mut throttle_bytes = 0u64;
 
     while let Some(chunk_result) = stream.next().await {
         if handle.cancelled.load(Ordering::SeqCst) {
@@ -821,6 +946,28 @@ async fn download_chunk(
             .await
             .map_err(|e| format!("Write error: {}", e))?;
         downloaded.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+
+        // Speed limiting: each chunk gets (total_limit / num_chunks) bandwidth
+        let speed_limit = handle.speed_limit.load(Ordering::Relaxed);
+        if speed_limit > 0 {
+            throttle_bytes += bytes.len() as u64;
+            let chunk_limit = speed_limit / num_chunks;
+            let elapsed = throttle_start.elapsed().as_secs_f64();
+            let expected_time = throttle_bytes as f64 / chunk_limit as f64;
+
+            if expected_time > elapsed {
+                let delay_ms = ((expected_time - elapsed) * 1000.0) as u64;
+                if delay_ms > 5 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                }
+            }
+
+            // Reset every second
+            if throttle_start.elapsed().as_secs() >= 1 {
+                throttle_start = std::time::Instant::now();
+                throttle_bytes = 0;
+            }
+        }
     }
 
     file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
@@ -958,13 +1105,82 @@ async fn download_single(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // Load history and settings
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let history = DownloadHistory::load().await;
+                let mut history = DownloadHistory::load().await;
+                let settings = Settings::load().await;
+
+                // Mark any "Downloading" status as "Paused" since app was closed
+                let mut needs_save = false;
+                for record in history.downloads.values_mut() {
+                    if record.status == DownloadStatus::Downloading {
+                        record.status = DownloadStatus::Paused;
+                        record.updated_at = chrono::Utc::now().timestamp();
+                        needs_save = true;
+                    }
+                }
+                if needs_save {
+                    let _ = history.save().await;
+                }
+
                 let state = handle.state::<AppState>();
                 *state.history.write().await = history;
+                *state.settings.write().await = settings;
             });
+
+            // Create system tray
+            let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .tooltip("WDM - Web Download Manager")
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            // Handle window close - minimize to tray instead of quitting
+            let window = app.get_webview_window("main").unwrap();
+            let window_clone = window.clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Prevent the window from closing, just hide it
+                    api.prevent_close();
+                    let _ = window_clone.hide();
+                }
+            });
+
             Ok(())
         })
         .manage(AppState {
@@ -982,6 +1198,11 @@ pub fn run() {
             resume_download,
             set_connections,
             get_connections,
+            get_download_folder,
+            set_download_folder,
+            reset_download_folder,
+            get_speed_limit,
+            set_speed_limit,
             get_download_history,
             clear_download_history,
             remove_from_history

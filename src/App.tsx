@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 interface UrlInfo {
@@ -95,10 +96,14 @@ function App() {
   const [customFilename, setCustomFilename] = useState("");
   const [history, setHistory] = useState<DownloadInfo[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [downloadFolder, setDownloadFolder] = useState("");
+  const [speedLimit, setSpeedLimit] = useState(0); // 0 = unlimited
 
   useEffect(() => {
-    // Load initial connections setting
+    // Load initial settings
     invoke<number>("get_connections").then(setConnections);
+    invoke<string>("get_download_folder").then(setDownloadFolder);
+    invoke<number>("get_speed_limit").then(setSpeedLimit);
 
     // Load download history
     loadHistory();
@@ -342,6 +347,40 @@ function App() {
     }
   }
 
+  async function selectDownloadFolder() {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Select Download Folder",
+      });
+      if (selected) {
+        await invoke("set_download_folder", { folder: selected });
+        setDownloadFolder(selected);
+      }
+    } catch (e) {
+      console.error("Failed to select folder:", e);
+    }
+  }
+
+  async function resetDownloadFolder() {
+    try {
+      const defaultFolder = await invoke<string>("reset_download_folder");
+      setDownloadFolder(defaultFolder);
+    } catch (e) {
+      console.error("Failed to reset folder:", e);
+    }
+  }
+
+  async function updateSpeedLimit(limit: number) {
+    try {
+      await invoke("set_speed_limit", { limit });
+      setSpeedLimit(limit);
+    } catch (e) {
+      console.error("Failed to set speed limit:", e);
+    }
+  }
+
   const activeDownloads = Array.from(downloads.values()).filter(
     (d) => !d.completed && !d.error && d.progress?.status !== "cancelled"
   );
@@ -393,60 +432,79 @@ function App() {
               ))}
             </select>
           </div>
+          <div className="setting-row folder-row">
+            <label>Download folder:</label>
+            <span className="folder-path" title={downloadFolder}>
+              {downloadFolder}
+            </span>
+            <button className="folder-btn" onClick={selectDownloadFolder}>
+              Browse
+            </button>
+            <button className="folder-reset-btn" onClick={resetDownloadFolder}>
+              Reset
+            </button>
+          </div>
+          <div className="setting-row">
+            <label>Speed limit:</label>
+            <select
+              value={speedLimit}
+              onChange={(e) => updateSpeedLimit(Number(e.target.value))}
+            >
+              <option value={0}>Unlimited</option>
+              <option value={512 * 1024}>512 KB/s</option>
+              <option value={1024 * 1024}>1 MB/s</option>
+              <option value={2 * 1024 * 1024}>2 MB/s</option>
+              <option value={5 * 1024 * 1024}>5 MB/s</option>
+              <option value={10 * 1024 * 1024}>10 MB/s</option>
+              <option value={20 * 1024 * 1024}>20 MB/s</option>
+              <option value={50 * 1024 * 1024}>50 MB/s</option>
+            </select>
+          </div>
         </div>
       )}
 
-      {showHistory && (
-        <div className="history-panel">
-          <div className="history-header">
-            <h3>Download History</h3>
-            {history.length > 0 && (
-              <button className="clear-history-btn" onClick={clearHistory}>
-                Clear Completed
-              </button>
+      {showHistory && (() => {
+        const finishedDownloads = history.filter(
+          (h) => h.status === "Completed" || h.status === "Failed" || h.status === "Cancelled"
+        );
+        return (
+          <div className="history-panel">
+            <div className="history-header">
+              <h3>Download History</h3>
+              {finishedDownloads.length > 0 && (
+                <button className="clear-history-btn" onClick={clearHistory}>
+                  Clear All
+                </button>
+              )}
+            </div>
+            {finishedDownloads.length === 0 ? (
+              <p className="no-history">No download history</p>
+            ) : (
+              <div className="history-list">
+                {finishedDownloads.map((item) => (
+                  <div key={item.id} className="history-item">
+                    <div className="history-item-info">
+                      <span className="history-filename">{item.filename}</span>
+                      <span className="history-size">{formatBytes(item.total_size)}</span>
+                      <span className={`history-status status-${item.status.toLowerCase()}`}>
+                        {item.status}
+                      </span>
+                    </div>
+                    <div className="history-item-actions">
+                      <button
+                        className="remove-history-btn"
+                        onClick={() => removeFromHistory(item.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
-          {history.length === 0 ? (
-            <p className="no-history">No download history</p>
-          ) : (
-            <div className="history-list">
-              {history.map((item) => (
-                <div key={item.id} className="history-item">
-                  <div className="history-item-info">
-                    <span className="history-filename">{item.filename}</span>
-                    <span className="history-size">
-                      {formatBytes(item.downloaded)} / {formatBytes(item.total_size)}
-                    </span>
-                    <span className={`history-status status-${item.status.toLowerCase()}`}>
-                      {item.status}
-                    </span>
-                  </div>
-                  <div className="history-item-actions">
-                    {(item.status === "Paused" ||
-                      item.status === "Failed" ||
-                      item.status === "Downloading") &&
-                      item.resumable &&
-                      !downloads.has(item.id) && (
-                        <button
-                          className="resume-history-btn"
-                          onClick={() => resumeInterruptedDownload(item.id)}
-                        >
-                          Resume
-                        </button>
-                      )}
-                    <button
-                      className="remove-history-btn"
-                      onClick={() => removeFromHistory(item.id)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       <form
         className="row"
