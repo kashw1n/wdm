@@ -118,7 +118,9 @@ pub fn run() {
             commands::set_speed_limit,
             commands::get_download_history,
             commands::clear_download_history,
-            commands::remove_from_history
+            commands::remove_from_history,
+            commands::open_file,
+            commands::show_in_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

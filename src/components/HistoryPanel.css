@@ -1,0 +1,30 @@
+/* History item actions */
+.history-item-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: 1rem;
+}
+
+.action-btn {
+  padding: 0.3em 0.6em;
+  font-size: 0.8em;
+  background: #396cd8;
+  color: white;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.action-btn:hover {
+  background: #2d5bb8;
+}
+
+.remove-history-btn {
+  padding: 0.3em 0.6em;
+  font-size: 0.8em;
+  background: rgba(128, 128, 128, 0.3);
+}
+
+.remove-history-btn:hover {
+  background: rgba(128, 128, 128, 0.5);
+}

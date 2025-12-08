@@ -1,5 +1,7 @@
 import { DownloadInfo } from "../types";
 import { formatBytes } from "../utils";
+import { invoke } from "@tauri-apps/api/core";
+import "./HistoryPanel.css";
 
 interface HistoryPanelProps {
   history: DownloadInfo[];
@@ -11,6 +13,22 @@ export function HistoryPanel({ history, clearHistory, removeFromHistory }: Histo
   const finishedDownloads = history.filter(
     (h) => h.status === "Completed" || h.status === "Failed" || h.status === "Cancelled"
   );
+
+  async function openFile(path: string) {
+    try {
+      await invoke("open_file", { path });
+    } catch (e) {
+      console.error("Failed to open file:", e);
+    }
+  }
+
+  async function showInFolder(path: string) {
+    try {
+      await invoke("show_in_folder", { path });
+    } catch (e) {
+      console.error("Failed to show in folder:", e);
+    }
+  }
 
   return (
     <div className="history-panel">
@@ -36,6 +54,16 @@ export function HistoryPanel({ history, clearHistory, removeFromHistory }: Histo
                 </span>
               </div>
               <div className="history-item-actions">
+                {item.status === "Completed" && (
+                    <>
+                        <button className="action-btn" onClick={() => openFile(item.file_path)}>
+                            Open
+                        </button>
+                        <button className="action-btn" onClick={() => showInFolder(item.file_path)}>
+                            Folder
+                        </button>
+                    </>
+                )}
                 <button
                   className="remove-history-btn"
                   onClick={() => removeFromHistory(item.id)}

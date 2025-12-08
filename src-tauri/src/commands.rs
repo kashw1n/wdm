@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
+use std::process::Command;
 
 #[tauri::command]
 pub async fn fetch_url_info(url: String) -> Result<UrlInfo, String> {
@@ -92,6 +93,7 @@ pub async fn get_download_history(app: AppHandle) -> Result<Vec<DownloadInfo>, S
             id: r.id.clone(),
             url: r.url.clone(),
             filename: r.filename.clone(),
+            file_path: r.file_path.clone(),
             total_size: r.total_size,
             downloaded: r.total_downloaded(),
             status: format!("{:?}", r.status),
@@ -500,5 +502,60 @@ pub async fn set_speed_limit(app: AppHandle, limit: u64) -> Result<(), String> {
         handle.speed_limit.store(limit, Ordering::Relaxed);
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_file(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn show_in_folder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .args(["/select,", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to show in folder: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to show in folder: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Linux file managers vary; try dbus or fallback to opening parent dir
+        let path_buf = PathBuf::from(&path);
+        let parent = path_buf.parent().unwrap_or(std::path::Path::new("/"));
+        Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
     Ok(())
 }

@@ -134,6 +134,7 @@ pub struct DownloadInfo {
     pub id: String,
     pub url: String,
     pub filename: String,
+    pub file_path: String,
     pub total_size: u64,
     pub downloaded: u64,
     pub status: String,

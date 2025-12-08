@@ -52,6 +52,7 @@ export interface DownloadInfo {
   id: string;
   url: string;
   filename: string;
+  file_path: string;
   total_size: number;
   downloaded: number;
   status: string;
