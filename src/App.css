@@ -178,8 +178,30 @@ button {
   border-radius: 8px;
 }
 
-.file-info h3 {
-  margin-top: 0;
+.file-info-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.file-info-header h3 {
+  margin: 0;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0 0.3em;
+  line-height: 1;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.close-btn:hover {
+  opacity: 1;
+  border: none;
 }
 
 .file-info p {

@@ -555,7 +555,12 @@ function App() {
 
       {urlInfo && !renamePrompt.show && (
         <div className="file-info">
-          <h3>File Info</h3>
+          <div className="file-info-header">
+            <h3>File Info</h3>
+            <button className="close-btn" onClick={() => setUrlInfo(null)} title="Close">
+              ×
+            </button>
+          </div>
           <p>
             <strong>Filename:</strong> {urlInfo.filename}
           </p>
