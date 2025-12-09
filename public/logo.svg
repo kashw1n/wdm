@@ -1,0 +1,37 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Deep Space Gradient Background -->
+    <linearGradient id="bg-gradient" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f172a" /> <!-- Slate 900 -->
+      <stop offset="100%" stop-color="#1e293b" /> <!-- Slate 800 -->
+    </linearGradient>
+    
+    <!-- Neon Blue Accent Gradient -->
+    <linearGradient id="accent-gradient" x1="512" y1="200" x2="512" y2="824" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3b82f6" /> <!-- Blue 500 -->
+      <stop offset="100%" stop-color="#60a5fa" /> <!-- Blue 400 -->
+    </linearGradient>
+
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="15" result="blur" />
+      <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -7" result="glow" />
+      <feBlend in="SourceGraphic" in2="glow" mode="normal" />
+    </filter>
+  </defs>
+  
+  <!-- Rounded Square Background -->
+  <!-- Removing stroke and ensuring fill covers completely. Slightly reducing size to ensure no anti-aliasing bleed at edges if any -->
+  <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#bg-gradient)" />
+  
+  <!-- Sleek Download Arrow -->
+  <g filter="url(#glow)">
+    <!-- Central Shaft -->
+    <path d="M512 250 V 650" stroke="url(#accent-gradient)" stroke-width="60" stroke-linecap="round"/>
+    
+    <!-- Arrow Head -->
+    <path d="M350 500 L 512 660 L 674 500" stroke="url(#accent-gradient)" stroke-width="60" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <!-- Minimalist U-shape Tray -->
+    <path d="M300 780 C 300 780, 512 880, 724 780" stroke="#94a3b8" stroke-width="50" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>

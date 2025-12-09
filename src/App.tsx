@@ -431,11 +431,22 @@ function App() {
         {/* Header */}
         <header className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-accent to-accent-dim flex items-center justify-center shadow-glow-sm flex-shrink-0">
-              <svg className="w-5 h-5 sm:w-6 sm:h-6 text-dark-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-            </div>
+            <svg className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl shadow-glow-sm flex-shrink-0" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="bg-gradient-header" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#0f172a" />
+                  <stop offset="100%" stopColor="#1e293b" />
+                </linearGradient>
+                <linearGradient id="accent-gradient-header" x1="512" y1="200" x2="512" y2="824" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#3b82f6" />
+                  <stop offset="100%" stopColor="#60a5fa" />
+                </linearGradient>
+              </defs>
+              <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#bg-gradient-header)" />
+              <path d="M512 250 V 650" stroke="url(#accent-gradient-header)" strokeWidth="60" strokeLinecap="round"/>
+              <path d="M350 500 L 512 660 L 674 500" stroke="url(#accent-gradient-header)" strokeWidth="60" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M300 780 C 300 780, 512 880, 724 780" stroke="#94a3b8" strokeWidth="50" strokeLinecap="round" fill="none"/>
+            </svg>
             <h1 className="text-lg sm:text-xl font-semibold text-gray-100 truncate">
               WDM
               <span className="text-gray-500 font-normal ml-2 text-xs sm:text-sm hidden xs:inline">Web Download Manager</span>
@@ -672,11 +683,22 @@ function App() {
         {/* Empty State */}
         {activeDownloads.length === 0 && completedDownloads.length === 0 && interruptedDownloads.length === 0 && !urlInfo && !videoInfo && !showSettings && !showHistory && (
           <div className="text-center py-16">
-            <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-dark-800 flex items-center justify-center">
-              <svg className="w-10 h-10 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-            </div>
+            <svg className="w-20 h-20 mx-auto mb-4" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="bg-gradient-empty" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#0f172a" />
+                  <stop offset="100%" stopColor="#1e293b" />
+                </linearGradient>
+                <linearGradient id="accent-gradient-empty" x1="512" y1="200" x2="512" y2="824" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#3b82f6" />
+                  <stop offset="100%" stopColor="#60a5fa" />
+                </linearGradient>
+              </defs>
+              <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#bg-gradient-empty)" />
+              <path d="M512 250 V 650" stroke="url(#accent-gradient-empty)" strokeWidth="60" strokeLinecap="round"/>
+              <path d="M350 500 L 512 660 L 674 500" stroke="url(#accent-gradient-empty)" strokeWidth="60" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M300 780 C 300 780, 512 880, 724 780" stroke="#94a3b8" strokeWidth="50" strokeLinecap="round" fill="none"/>
+            </svg>
             <p className="text-gray-500 text-sm">Paste a URL above to start downloading</p>
           </div>
         )}
