@@ -10,7 +10,17 @@ A modern, high-performance download manager built with **Tauri** and **React**. 
   </a>
 </p>
 
+## 📥 Download & Install
 
+**[Download the latest version here](https://github.com/kashw1n/wdm/releases)**
+
+Please download the appropriate installer for your operating system:
+
+*   **macOS:** `.dmg`
+*   **Windows:** `.exe` or `.msi`
+*   **Linux:** `.deb`, `.rpm`, or `.AppImage`
+
+> **Note for macOS users:** If you see a "damaged" or "unidentified developer" warning, please right-click the app and select "Open", or run `xattr -cr /Applications/WDM.app` after installation.
 
 ## 🚀 Features
 
