@@ -297,7 +297,7 @@ function App() {
             id: id,
             filename: histItem.filename,
             url: histItem.url,
-            totalSize: histItem.size,
+            totalSize: histItem.total_size,
             downloaded: 0, // Should be loaded from history ideally
             speed: 0,
             progress: 0,
