@@ -532,31 +532,43 @@ fn parse_progress_line(line: &str, id: &str) -> Option<VideoProgress> {
         return None;
     }
 
-    // Helper to parse u64 with NA handling
-    let parse_u64 = |s: &str| -> u64 {
-        if s.contains("NA") { 0 } else { s.trim().parse().unwrap_or(0) }
-    };
-    
-    // Helper to parse f64 with NA handling
-    let parse_f64 = |s: &str| -> f64 {
+    // Helper to parse numeric strings that might be floats or "NA"
+    let parse_num = |s: &str| -> f64 {
         if s.contains("NA") { 0.0 } else { s.trim().parse().unwrap_or(0.0) }
     };
 
     // Try to parse percent from string (e.g. " 10.5%")
     let percent_str = parts[0].trim().trim_end_matches('%');
-    let mut percent: f64 = parse_f64(percent_str);
+    let mut percent: f64 = parse_num(percent_str);
 
-    let downloaded: u64 = parse_u64(parts[1]);
+    // Parse bytes as f64 first to handle "1234.0", then cast to u64
+    let downloaded: u64 = parse_num(parts[1]) as u64;
     
-    let total_exact: u64 = parse_u64(parts[2]);
-    let total_est: u64 = parse_u64(parts[3]);
-    let total = if total_exact > 0 { total_exact } else { total_est };
+    let total_exact: u64 = parse_num(parts[2]) as u64;
+    let total_est: u64 = parse_num(parts[3]) as u64;
+    let mut total = if total_exact > 0 { total_exact } else { total_est };
 
-    let speed: f64 = parse_f64(parts[4]);
+    let speed: f64 = parse_num(parts[4]);
     let eta_str = parts[5].trim();
     let eta: Option<u64> = if eta_str.contains("NA") { None } else { eta_str.parse().ok() };
 
-    // Fallback to calculation if percent is 0 but we have totals
+    // Strategy for Total Size:
+    // 1. If we have a valid percentage (> 0) and downloaded bytes, we can infer the total size.
+    //    This makes the progress bar consistent (e.g. if 10MB is 50%, Total MUST be 20MB).
+    // 2. This is often more reliable than yt-dlp's total estimate which can be off or "NA".
+    if percent > 0.01 && downloaded > 0 {
+        let inferred_total = (downloaded as f64 / (percent / 100.0)) as u64;
+        
+        // Use inferred total if:
+        // - Reported total is 0 (unknown)
+        // - Reported total is suspiciously small (< 50KB) (likely manifest size)
+        // - Reported total is less than downloaded (impossible)
+        if total == 0 || total < 50 * 1024 || total < downloaded {
+            total = inferred_total;
+        }
+    }
+
+    // Fallback: If percent is 0 but we have totals, calculate percent
     if percent == 0.0 && total > 0 {
         percent = (downloaded as f64 / total as f64) * 100.0;
     }

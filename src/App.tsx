@@ -71,7 +71,7 @@ function App() {
 
           // Update other fields
           updatedDownload.downloaded = progress.downloaded;
-          updatedDownload.totalSize = progress.total > 0 ? progress.total : download.totalSize;
+          updatedDownload.totalSize = progress.total; // Always update total size from event
           updatedDownload.speed = progress.speed;
           updatedDownload.status = progress.status as any;
           if (progress.eta !== undefined) updatedDownload.eta = progress.eta;
