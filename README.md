@@ -4,6 +4,13 @@
 
 A modern, high-performance download manager built with **Tauri** and **React**. WDM combines the native performance of Rust with a sleek, reactive user interface to handle both standard file downloads and video content from popular platforms.
 
+<p align="center">
+  <a href="https://tauri.app" target="_blank">
+    <img src="https://img.shields.io/badge/Built%20with-Tauri-24C8C2.svg?style=for-the-badge" alt="Built with Tauri" />
+  </a>
+</p>
+
+
 
 ## 🚀 Features
 
