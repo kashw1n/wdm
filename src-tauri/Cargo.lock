@@ -4852,6 +4852,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "futures",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

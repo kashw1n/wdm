@@ -1,4 +1,5 @@
 use crate::persistence::DownloadHistory;
+use crate::video::VideoDownloadHandle;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ pub const DEFAULT_CONNECTIONS: u64 = 8;
 
 pub struct AppState {
     pub downloads: RwLock<HashMap<String, Arc<DownloadHandle>>>,
+    pub video_downloads: RwLock<HashMap<String, Arc<VideoDownloadHandle>>>,
     pub settings: RwLock<Settings>,
     pub history: RwLock<DownloadHistory>,
 }

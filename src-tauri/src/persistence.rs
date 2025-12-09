@@ -15,6 +15,10 @@ pub struct DownloadRecord {
     pub status: DownloadStatus,
     pub num_connections: u64,
     pub chunks: Vec<ChunkRecord>,
+    #[serde(default)]
+    pub is_video: bool,
+    #[serde(default)]
+    pub thumbnail: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -108,6 +112,24 @@ impl DownloadHistory {
         }
     }
 
+    pub fn update_video_progress(&mut self, id: &str, downloaded: u64, total: u64) {
+        if let Some(record) = self.downloads.get_mut(id) {
+            record.total_size = total;
+            if let Some(chunk) = record.chunks.first_mut() {
+                chunk.downloaded = downloaded;
+                chunk.end = if total > 0 { total - 1 } else { 0 };
+            } else {
+                record.chunks.push(ChunkRecord {
+                    id: 0,
+                    start: 0,
+                    end: if total > 0 { total - 1 } else { 0 },
+                    downloaded,
+                });
+            }
+            record.updated_at = chrono::Utc::now().timestamp();
+        }
+    }
+
     pub fn get_download(&self, id: &str) -> Option<&DownloadRecord> {
         self.downloads.get(id)
     }
@@ -132,21 +154,33 @@ impl DownloadRecord {
         total_size: u64,
         resumable: bool,
         num_connections: u64,
+        is_video: bool,
+        thumbnail: Option<String>,
     ) -> Self {
-        let chunk_size = total_size / num_connections;
+        let chunk_size = if total_size > 0 && num_connections > 0 { total_size / num_connections } else { 0 };
         let mut chunks = Vec::new();
 
-        for i in 0..num_connections {
-            let start = i * chunk_size;
-            let end = if i == num_connections - 1 {
-                total_size - 1
-            } else {
-                (i + 1) * chunk_size - 1
-            };
-            chunks.push(ChunkRecord {
-                id: i,
-                start,
-                end,
+        if !is_video && num_connections > 0 {
+             for i in 0..num_connections {
+                let start = i * chunk_size;
+                let end = if i == num_connections - 1 {
+                    if total_size > 0 { total_size - 1 } else { 0 }
+                } else {
+                    (i + 1) * chunk_size - 1
+                };
+                chunks.push(ChunkRecord {
+                    id: i,
+                    start,
+                    end,
+                    downloaded: 0,
+                });
+            }
+        } else if is_video {
+            // For video, we just use one chunk placeholder
+             chunks.push(ChunkRecord {
+                id: 0,
+                start: 0,
+                end: if total_size > 0 { total_size - 1 } else { 0 },
                 downloaded: 0,
             });
         }
@@ -162,6 +196,8 @@ impl DownloadRecord {
             status: DownloadStatus::Pending,
             num_connections,
             chunks,
+            is_video,
+            thumbnail,
             created_at: now,
             updated_at: now,
         }

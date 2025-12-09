@@ -4,13 +4,14 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import {
-  Download,
+  DownloadItem as Download, // Aliased to match existing code usage
   DownloadInfo,
   UrlInfo,
   FileExistsInfo,
   DownloadProgress,
   DownloadComplete,
   DownloadError,
+  VideoInfo,
 } from "./types";
 import { formatBytes } from "./utils";
 
@@ -20,6 +21,7 @@ import { HistoryPanel } from "./components/HistoryPanel";
 import { RenamePrompt } from "./components/RenamePrompt";
 import { FileInfo } from "./components/FileInfo";
 import { AddDownloadForm } from "./components/AddDownloadForm";
+import { VideoInfoComponent } from "./components/VideoInfo";
 
 function App() {
   const [url, setUrl] = useState("");
@@ -41,6 +43,11 @@ function App() {
   const [downloadFolder, setDownloadFolder] = useState("");
   const [speedLimit, setSpeedLimit] = useState(0);
 
+  // Video download state
+  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [ytdlpInstalling, setYtdlpInstalling] = useState(false);
+  const [ytdlpProgress, setYtdlpProgress] = useState<{ downloaded: number; total: number } | null>(null);
+
   useEffect(() => {
     invoke<number>("get_connections").then(setConnections);
     invoke<string>("get_download_folder").then(setDownloadFolder);
@@ -53,7 +60,23 @@ function App() {
         const newMap = new Map(prev);
         const download = newMap.get(progress.id);
         if (download) {
-          newMap.set(progress.id, { ...download, progress });
+          // If it's a video download, we might get ETA/Percent from the payload
+          // We merge the progress into the download item
+          const updatedDownload = { ...download, progress: progress.percent || 0 };
+          
+          // For standard downloads, progress is calculated
+          if (progress.total > 0 && !progress.percent) {
+             updatedDownload.progress = (progress.downloaded / progress.total) * 100;
+          }
+
+          // Update other fields
+          updatedDownload.downloaded = progress.downloaded;
+          updatedDownload.totalSize = progress.total > 0 ? progress.total : download.totalSize;
+          updatedDownload.speed = progress.speed;
+          updatedDownload.status = progress.status as any;
+          if (progress.eta !== undefined) updatedDownload.eta = progress.eta;
+
+          newMap.set(progress.id, updatedDownload);
         }
         return newMap;
       });
@@ -67,9 +90,9 @@ function App() {
         if (download) {
           newMap.set(complete.id, {
             ...download,
-            completed: true,
-            completedPath: complete.path,
-            progress: null,
+            status: "completed",
+            progress: 100,
+            filename: complete.filename || download.filename, // Update filename if provided
           });
         }
         return newMap;
@@ -83,17 +106,22 @@ function App() {
         const newMap = new Map(prev);
         const download = newMap.get(err.id);
         if (download) {
-          newMap.set(err.id, { ...download, error: err.error, progress: null });
+          newMap.set(err.id, { ...download, status: "error" }); // Error handling might need refinement
         }
         return newMap;
       });
       loadHistory();
     });
 
+    const unlistenYtdlpProgress = listen<{ downloaded: number; total: number }>("ytdlp-download-progress", (event) => {
+      setYtdlpProgress(event.payload);
+    });
+
     return () => {
       unlistenProgress.then((fn) => fn());
       unlistenComplete.then((fn) => fn());
       unlistenError.then((fn) => fn());
+      unlistenYtdlpProgress.then((fn) => fn());
     };
   }, []);
 
@@ -111,10 +139,33 @@ function App() {
     setLoading(true);
     setError(null);
     setUrlInfo(null);
+    setVideoInfo(null);
 
     try {
-      const info = await invoke<UrlInfo>("fetch_url_info", { url });
-      setUrlInfo(info);
+      // Check if this is a video URL
+      const isVideo = await invoke<boolean>("check_video_url", { url });
+
+      if (isVideo) {
+        // Ensure yt-dlp is installed
+        const ytdlpInstalled = await invoke<boolean>("check_ytdlp_installed");
+        if (!ytdlpInstalled) {
+          setYtdlpInstalling(true);
+          try {
+            await invoke<string>("install_ytdlp");
+          } finally {
+            setYtdlpInstalling(false);
+            setYtdlpProgress(null);
+          }
+        }
+
+        // Fetch video info
+        const info = await invoke<VideoInfo>("get_video_info", { url });
+        setVideoInfo(info);
+      } else {
+        // Regular file download
+        const info = await invoke<UrlInfo>("fetch_url_info", { url });
+        setUrlInfo(info);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -168,9 +219,13 @@ function App() {
           id: downloadId,
           filename: filename,
           url: info.url,
-          size: info.size || 0,
-          progress: null,
-          completed: false,
+          totalSize: info.size || 0,
+          downloaded: 0,
+          speed: 0,
+          progress: 0,
+          status: "downloading",
+          created_at: Date.now(),
+          type: 'file'
         });
         return newMap;
       });
@@ -207,8 +262,17 @@ function App() {
   }
 
   async function cancelDownload(id: string) {
+    const download = downloads.get(id);
     try {
-      await invoke("cancel_download", { id });
+      if (download?.type === 'video') {
+        await invoke("cancel_video_download", { id });
+      } else {
+        await invoke("cancel_download", { id });
+      }
+      // For video downloads, we remove them from the list immediately upon cancel 
+      // if they haven't finished, or we can just let the status update handle it.
+      // But standard download behavior keeps them in history if cancelled?
+      // The old code loaded history.
       loadHistory();
     } catch (e) {
       console.error("Failed to cancel:", e);
@@ -233,16 +297,13 @@ function App() {
             id: id,
             filename: histItem.filename,
             url: histItem.url,
-            size: histItem.total_size,
-            progress: {
-              id: id,
-              downloaded: histItem.downloaded,
-              total: histItem.total_size,
-              speed: 0,
-              status: "downloading",
-              chunk_progress: [],
-            },
-            completed: false,
+            totalSize: histItem.size,
+            downloaded: 0, // Should be loaded from history ideally
+            speed: 0,
+            progress: 0,
+            status: "downloading",
+            created_at: Date.now(),
+            type: 'file'
           });
           return newMap;
         });
@@ -314,11 +375,48 @@ function App() {
     }
   }
 
+  // Video download functions
+  async function startVideoDownload(formatId: string) {
+    if (!videoInfo) return;
+    setError(null);
+
+    try {
+      const downloadId = await invoke<string>("start_video_download", {
+        url: videoInfo.url,
+        formatId,
+      });
+
+      setDownloads((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(downloadId, {
+          id: downloadId,
+          url: videoInfo.url,
+          filename: videoInfo.title, // Use title as initial filename
+          totalSize: 0, // Unknown initially
+          downloaded: 0,
+          speed: 0,
+          progress: 0,
+          status: "starting",
+          created_at: Date.now(),
+          type: 'video',
+          thumbnail: videoInfo.thumbnail,
+          videoTitle: videoInfo.title
+        });
+        return newMap;
+      });
+
+      setUrl("");
+      setVideoInfo(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   const activeDownloads = Array.from(downloads.values()).filter(
-    (d) => !d.completed && !d.error && d.progress?.status !== "cancelled"
+    (d) => d.status !== "completed" && d.status !== "error" && d.status !== "cancelled"
   );
   const completedDownloads = Array.from(downloads.values()).filter(
-    (d) => d.completed || d.error || d.progress?.status === "cancelled"
+    (d) => d.status === "completed" || d.status === "error" || d.status === "cancelled"
   );
   const interruptedDownloads = history.filter(
     (h) =>
@@ -419,12 +517,51 @@ function App() {
           />
         )}
 
+        {/* yt-dlp Installing Indicator */}
+        {ytdlpInstalling && (
+          <div className="panel animate-fade-in">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-red-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-200">Setting up video support...</p>
+                <p className="text-xs text-gray-500">Downloading yt-dlp</p>
+                {ytdlpProgress && ytdlpProgress.total > 0 && (
+                  <div className="mt-2">
+                    <div className="progress-bar">
+                      <div
+                        className="progress-fill"
+                        style={{ width: `${(ytdlpProgress.downloaded / ytdlpProgress.total) * 100}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formatBytes(ytdlpProgress.downloaded)} / {formatBytes(ytdlpProgress.total)}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* File Info */}
         {urlInfo && !renamePrompt.show && (
           <FileInfo
             urlInfo={urlInfo}
             onClose={() => setUrlInfo(null)}
             onDownload={startDownload}
+          />
+        )}
+
+        {/* Video Info */}
+        {videoInfo && (
+          <VideoInfoComponent
+            info={videoInfo}
+            onDownload={startVideoDownload}
+            onCancel={() => setVideoInfo(null)}
           />
         )}
 
@@ -496,15 +633,25 @@ function App() {
             {completedDownloads.map((download) => (
               <div key={download.id} className="card opacity-75">
                 <div className="flex items-center justify-between">
+                  {/* Thumbnail for video downloads */}
+                  {download.thumbnail && (
+                    <div className="w-10 h-7 mr-3 rounded overflow-hidden bg-dark-700 flex-shrink-0">
+                      <img src={download.thumbnail} alt="" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                  
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-300 truncate">{download.filename}</p>
-                    {download.completed && (
-                      <p className="text-xs text-gray-500 truncate mt-1">{download.completedPath}</p>
+                    <p className="font-medium text-gray-300 truncate">
+                      {download.videoTitle || download.filename}
+                    </p>
+                    {download.status === 'completed' && download.filename && (
+                       // If we have a path or just filename
+                      <p className="text-xs text-gray-500 truncate mt-1">{download.filename}</p>
                     )}
-                    {download.error && (
-                      <p className="text-sm text-red-400 mt-1">{download.error}</p>
+                    {download.status === 'error' && (
+                      <p className="text-sm text-red-400 mt-1">Error</p>
                     )}
-                    {download.progress?.status === "cancelled" && (
+                    {download.status === 'cancelled' && (
                       <p className="text-sm text-amber-400 mt-1">Cancelled</p>
                     )}
                   </div>
@@ -523,7 +670,7 @@ function App() {
         )}
 
         {/* Empty State */}
-        {activeDownloads.length === 0 && completedDownloads.length === 0 && interruptedDownloads.length === 0 && !urlInfo && !showSettings && !showHistory && (
+        {activeDownloads.length === 0 && completedDownloads.length === 0 && interruptedDownloads.length === 0 && !urlInfo && !videoInfo && !showSettings && !showHistory && (
           <div className="text-center py-16">
             <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-dark-800 flex items-center justify-center">
               <svg className="w-10 h-10 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

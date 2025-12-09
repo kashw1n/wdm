@@ -3,6 +3,8 @@ mod downloader;
 mod persistence;
 mod state;
 mod utils;
+mod video;
+mod ytdlp;
 
 use persistence::{DownloadHistory, DownloadStatus};
 use state::{AppState, Settings};
@@ -98,6 +100,7 @@ pub fn run() {
         })
         .manage(AppState {
             downloads: RwLock::new(HashMap::new()),
+            video_downloads: RwLock::new(HashMap::new()),
             settings: RwLock::new(Settings::default()),
             history: RwLock::new(DownloadHistory::default()),
         })
@@ -120,7 +123,15 @@ pub fn run() {
             commands::clear_download_history,
             commands::remove_from_history,
             commands::open_file,
-            commands::show_in_folder
+            commands::show_in_folder,
+            // Video commands
+            commands::check_video_url,
+            commands::check_ytdlp_installed,
+            commands::install_ytdlp,
+            commands::get_ytdlp_ver,
+            commands::get_video_info,
+            commands::start_video_download,
+            commands::cancel_video_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
